@@ -1,0 +1,38 @@
+{
+  "name": "langraph-mcp",
+  "version": "1.0.0",
+  "description": "NestJS + LangGraph MCP proof-of-concept server",
+  "type": "module",
+  "main": "dist/main.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "dev": "ts-node --esm src/main.ts",
+    "demo:build": "tsc -p tsconfig.demos.json",
+    "demo": "npm run demo:build && node dist-demos/demos/demo-runner.js",
+    "demo:one": "npm run demo:build && node dist-demos/demos/demo-runner.js",
+    "test": "echo \"No tests yet\""
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "@langchain/core": "^1.1.49",
+    "@langchain/langgraph": "^1.4.2",
+    "@langchain/ollama": "^1.2.7",
+    "@langchain/openai": "^1.4.7",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@nestjs/common": "^11.1.27",
+    "@nestjs/core": "^11.1.27",
+    "dotenv": "^17.4.2",
+    "langchain": "^1.4.5",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "ts-node": "^10.9.2",
+    "typescript": "^6.0.3"
+  }
+}
