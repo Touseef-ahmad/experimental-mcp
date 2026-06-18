@@ -269,16 +269,36 @@ export class MainAgentService implements OnModuleInit {
     const agentNode = async (state: typeof MainAgentState.State) => {
       const systemMessage = {
         role: "system",
-        content: `You are the main orchestration agent with access to all organizational tools.
+        content: `You are the main orchestration agent. You MUST use tools to answer queries - do not make up data.
 
-Available tools:
-- list_employees, find_employee_by_name: Employee data queries
-- get_engagement_score, get_trend_summary, get_project_health, get_current_timestamp: Analytics
-- build_report: Report generation
-- request_approval: Approval workflows
+IMPORTANT: Always use the appropriate tool to get real data. Never guess or fabricate information.
+
+Available tools by domain:
+
+EMPLOYEE DOMAIN:
+- list_employees: Lists ALL employees in the organization (use this first to see who exists)
+- find_employee_by_name: Find a specific employee by exact name (Ava, Noah, Mia, Liam)
+
+ANALYTICS DOMAIN:
+- get_engagement_score: Get engagement score for a team or employee name
+- get_trend_summary: Get trend analysis for a topic/metric
+- get_project_health: Check health status of a project
+- get_current_timestamp: Get current UTC time
+
+REPORTING DOMAIN:
+- build_report: Generate a structured report with title and key points
+
+APPROVAL DOMAIN:
+- request_approval: Request approval for an action (low/medium/high risk)
+
+UTILITY:
 - list_capabilities: Show all available capabilities
 
-Answer user queries by using the appropriate tools. For complex queries, combine multiple tools.`,
+RULES:
+1. ALWAYS use list_employees first if asked about employees, teams, or people
+2. Use the exact employee names from the system: Ava, Noah, Mia, Liam
+3. For engagement scores, use actual employee/team names from our data
+4. Never invent employee names like "John Doe" - use real data from tools`,
       };
 
       const response = await llmWithTools.invoke([
@@ -286,9 +306,19 @@ Answer user queries by using the appropriate tools. For complex queries, combine
         ...state.messages,
       ]);
 
+      // Track which tools are being called for better trace
+      const toolCalls = (
+        response as unknown as { tool_calls?: Array<{ name: string }> }
+      ).tool_calls;
+      const toolNames = toolCalls?.map((tc) => tc.name) || [];
+      const traceEntry =
+        toolNames.length > 0
+          ? `main-agent[${toolNames.join(",")}]`
+          : "main-agent";
+
       return {
         messages: [response],
-        trace: [...state.trace, "main-agent"],
+        trace: [...state.trace, traceEntry],
       };
     };
 
@@ -309,9 +339,18 @@ Answer user queries by using the appropriate tools. For complex queries, combine
       return "tools";
     };
 
+    // Wrap tool node to add trace
+    const toolNodeWithTrace = async (state: typeof MainAgentState.State) => {
+      const result = await toolNode.invoke(state);
+      return {
+        ...result,
+        trace: [...state.trace, "tools-executed"],
+      };
+    };
+
     return new StateGraph(MainAgentState)
       .addNode("agent", agentNode)
-      .addNode("tools", toolNode)
+      .addNode("tools", toolNodeWithTrace)
       .addEdge(START, "agent")
       .addConditionalEdges("agent", routeAfterAgent, {
         tools: "tools",

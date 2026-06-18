@@ -4,6 +4,7 @@ node_modules/
 # Build outputs
 dist/
 dist-demos/
+dist-scripts/
 *.js.map
 *.d.ts
 

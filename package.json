@@ -11,6 +11,8 @@
     "demo:build": "tsc -p tsconfig.demos.json",
     "demo": "npm run demo:build && node dist-demos/demos/demo-runner.js",
     "demo:one": "npm run demo:build && node dist-demos/demos/demo-runner.js",
+    "client:build": "tsc -p tsconfig.scripts.json",
+    "client": "npm run build && npm run client:build && node dist-scripts/scripts/mcp-client.js",
     "test": "echo \"No tests yet\""
   },
   "keywords": [],
