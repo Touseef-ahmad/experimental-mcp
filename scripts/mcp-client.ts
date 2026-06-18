@@ -56,7 +56,7 @@ class McpTestClient {
 
     this.transport = new StdioClientTransport({
       command: "node",
-      args: ["dist/main.js"],
+      args: ["dist/src/main.js"],
       cwd: projectRoot,
       env: process.env as Record<string, string>,
     });
