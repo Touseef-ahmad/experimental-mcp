@@ -1,43 +1,132 @@
 import { Injectable, Logger, OnModuleDestroy } from "@nestjs/common";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
 import { z } from "zod";
+import express, { Express, Request, Response } from "express";
+import cors from "cors";
 import { LangGraphAgentService } from "../agent/langgraph-agent.service.js";
 import { MainAgentService } from "../agent/main-agent.service.js";
 
 @Injectable()
 export class McpServerService implements OnModuleDestroy {
   private readonly logger = new Logger(McpServerService.name);
-  private readonly mcpServer = new McpServer({
-    name: "nestjs-langgraph-mcp",
-    version: "0.1.0",
-  });
+  private mcpServer?: McpServer;
   private transport?: StdioServerTransport;
+  private sseSessions: Map<
+    string,
+    { server: McpServer; transport: SSEServerTransport }
+  > = new Map();
+  private httpServer?: ReturnType<Express["listen"]>;
 
   constructor(
     private readonly agent: LangGraphAgentService,
     private readonly mainAgent: MainAgentService,
-  ) {
-    this.registerTools();
+  ) {}
+
+  private createMcpServer(): McpServer {
+    const server = new McpServer({
+      name: "nestjs-langgraph-mcp",
+      version: "0.1.0",
+    });
+    this.registerTools(server);
+    return server;
   }
 
+  /**
+   * Start MCP server with stdio transport (default)
+   */
   async start(): Promise<void> {
     if (this.transport) {
       return;
     }
 
+    this.mcpServer = this.createMcpServer();
     this.transport = new StdioServerTransport();
     await this.mcpServer.connect(this.transport);
     this.logger.log("MCP server connected via stdio");
   }
 
-  async onModuleDestroy(): Promise<void> {
-    await this.mcpServer.close();
+  /**
+   * Start MCP server with SSE transport over HTTP
+   */
+  async startHttp(port: number = 3000): Promise<void> {
+    const app: Express = express();
+    app.use(cors());
+    app.use(express.json());
+
+    // SSE endpoint - clients connect here for server-sent events
+    app.get("/sse", async (req: Request, res: Response) => {
+      this.logger.log("New SSE connection");
+
+      const sessionId = crypto.randomUUID();
+      const server = this.createMcpServer();
+      const transport = new SSEServerTransport("/message", res);
+
+      this.sseSessions.set(sessionId, { server, transport });
+
+      res.on("close", async () => {
+        this.logger.log(`SSE connection closed: ${sessionId}`);
+        const session = this.sseSessions.get(sessionId);
+        if (session) {
+          await session.server.close();
+          this.sseSessions.delete(sessionId);
+        }
+      });
+
+      await server.connect(transport);
+    });
+
+    // Message endpoint - clients send messages here
+    app.post("/message", async (req: Request, res: Response) => {
+      const sessionId = req.query.sessionId as string;
+      const session = this.sseSessions.get(sessionId);
+
+      if (!session) {
+        // For single-client mode, use first available session
+        const firstSession = this.sseSessions.values().next().value;
+        if (firstSession) {
+          await firstSession.transport.handlePostMessage(req, res);
+        } else {
+          res.status(404).json({ error: "No active SSE connection" });
+        }
+        return;
+      }
+
+      await session.transport.handlePostMessage(req, res);
+    });
+
+    // Health endpoint
+    app.get("/health", (_req: Request, res: Response) => {
+      res.json({
+        ok: true,
+        transport: "sse",
+        connections: this.sseSessions.size,
+      });
+    });
+
+    this.httpServer = app.listen(port, () => {
+      this.logger.log(`MCP server running on http://localhost:${port}`);
+      this.logger.log(`SSE endpoint: http://localhost:${port}/sse`);
+      this.logger.log(`Message endpoint: http://localhost:${port}/message`);
+    });
   }
 
-  private registerTools(): void {
+  async onModuleDestroy(): Promise<void> {
+    if (this.httpServer) {
+      this.httpServer.close();
+    }
+    for (const [, session] of this.sseSessions) {
+      await session.server.close();
+    }
+    if (this.mcpServer) {
+      await this.mcpServer.close();
+    }
+  }
+
+  private registerTools(server: McpServer): void {
     // Main agent - the primary entry point for clients
-    this.mcpServer.registerTool(
+    server.registerTool(
       "main_agent",
       {
         title: "Main Agent",
@@ -78,7 +167,7 @@ Use this as the primary interface for all requests.`,
     );
 
     // List available agents and their capabilities
-    this.mcpServer.registerTool(
+    server.registerTool(
       "list_agents",
       {
         title: "List Available Agents",
@@ -111,7 +200,7 @@ Use this as the primary interface for all requests.`,
     );
 
     // Legacy run_agent tool for backward compatibility
-    this.mcpServer.registerTool(
+    server.registerTool(
       "run_agent",
       {
         title: "Run LangGraph Agent",
@@ -144,7 +233,7 @@ Use this as the primary interface for all requests.`,
       },
     );
 
-    this.mcpServer.registerTool(
+    server.registerTool(
       "health",
       {
         title: "Health Check",

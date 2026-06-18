@@ -11,10 +11,20 @@ async function bootstrap(): Promise<void> {
   });
 
   const mcpServer = app.get(McpServerService);
-  await mcpServer.start();
-
   const logger = new Logger("Bootstrap");
-  logger.log("NestJS MCP server is running on stdio transport");
+
+  // Check transport mode from environment or CLI args
+  const useHttp =
+    process.env.MCP_TRANSPORT === "http" || process.argv.includes("--http");
+  const port = parseInt(process.env.MCP_PORT ?? "3000", 10);
+
+  if (useHttp) {
+    await mcpServer.startHttp(port);
+    logger.log(`NestJS MCP server is running on http://localhost:${port}`);
+  } else {
+    await mcpServer.start();
+    logger.log("NestJS MCP server is running on stdio transport");
+  }
 
   const shutdown = async (): Promise<void> => {
     logger.log("Shutting down MCP server...");
