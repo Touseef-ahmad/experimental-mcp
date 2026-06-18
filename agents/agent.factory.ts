@@ -1,4 +1,4 @@
-import { createModel, getModelConfig } from "./model.config.js";
+import { getModelConfig } from "./model.config.js";
 import { createEmployeeAgent } from "./employee.agent.js";
 import { createAnalyticsAgent } from "./analytics.agent.js";
 import { createReportingAgent } from "./reporting.agent.js";
@@ -14,27 +14,26 @@ import {
 } from "./tools.js";
 
 /**
- * Creates all agents in the system including the main orchestration agent.
+ * Creates all agents in the system using OpenAI Agents SDK.
  * This factory is used by the demos and can be imported separately from the NestJS app.
  */
 export function createAgents() {
-  const llm = createModel();
+  // Create specialist agents (no longer need LLM passed in)
+  const employee = createEmployeeAgent();
+  const analytics = createAnalyticsAgent();
+  const reporting = createReportingAgent();
+  const approval = createApprovalAgent();
 
-  const employee = createEmployeeAgent(llm);
-  const analytics = createAnalyticsAgent(llm);
-  const reporting = createReportingAgent(llm);
-  const approval = createApprovalAgent(llm);
+  // Create coordinator with access to specialists
   const coordinator = createCoordinatorAgent(
-    llm,
     employee,
     analytics,
     reporting,
     approval,
   );
 
-  // Main agent with access to all other agents and tools
+  // Create main agent with access to all other agents and tools
   const main = createMainAgent({
-    llm,
     employeeAgent: employee,
     analyticsAgent: analytics,
     reportingAgent: reporting,
@@ -42,20 +41,16 @@ export function createAgents() {
     coordinatorAgent: coordinator,
   });
 
+  // Tool registry for discovery
   const toolRegistry = {
     employee: employeeTools.map((t) => t.name),
     analytics: analyticsTools.map((t) => t.name),
     reporting: reportingTools.map((t) => t.name),
     approval: approvalTools.map((t) => t.name),
-    main: [
-      "delegate_to_agent",
-      "list_agent_capabilities",
-      ...allTools.map((t) => t.name),
-    ],
+    main: ["list_agent_capabilities", ...allTools.map((t) => t.name)],
   };
 
   return {
-    llm,
     employee,
     analytics,
     reporting,

@@ -5,11 +5,11 @@ export async function runHandoffsDemo(): Promise<void> {
   await runDemo("03 handoffs", async () => {
     const { coordinator } = createAgents();
 
-    step("streaming coordinator execution...");
+    step("running coordinator with handoffs...");
     edge("START", "coordinator");
 
     const result = await coordinator.run(
-      "Create report for employee engagement",
+      "Create a report for employee engagement"
     );
 
     // Show handoff chain

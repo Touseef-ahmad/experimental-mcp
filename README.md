@@ -1,18 +1,19 @@
-# NestJS + LangGraph MCP POC
+# NestJS + OpenAI Agents SDK MCP POC
 
-A simple proof-of-concept MCP server built with NestJS, using LangGraph as the orchestration layer for tool execution and agent workflows.
+A proof-of-concept MCP server built with NestJS, using the **OpenAI Agents SDK** for agent orchestration, tool execution, and multi-agent workflows.
+
+> **Migration Note**: This project was migrated from LangGraph/LangChain to OpenAI Agents SDK (`@openai/agents`).
 
 ## Features
 
 - NestJS application context (no HTTP server required)
 - MCP server over stdio transport
-- LangGraph `StateGraph` workflow with nodes:
-  - `route` (model-based tool routing)
-  - `executeTool` (executes selected tool)
-  - `respond` (final answer generation)
-- Model provider switch:
-  - OpenAI (`@langchain/openai`)
-  - Ollama local model (`@langchain/ollama`, default `qwen2.5:1.5b`)
+- **OpenAI Agents SDK** for agent workflows:
+  - `Agent` with built-in agent loop
+  - `handoff()` for multi-agent delegation
+  - `tool()` for function tool definitions
+  - `needsApproval` for human-in-the-loop
+- OpenAI models (gpt-4o-mini by default)
 
 ## Quick Start
 
@@ -26,6 +27,7 @@ npm install
 
 ```bash
 cp .env.example .env
+# Set OPENAI_API_KEY in .env
 ```
 
 3. Build and run:
@@ -37,77 +39,61 @@ npm start
 
 The MCP server starts on stdio.
 
-## Model Selection
+## Model Configuration
 
-Default provider is read from `MODEL_PROVIDER`.
-
-- Use OpenAI:
-  - `MODEL_PROVIDER=openai`
-  - set `OPENAI_API_KEY`
-  - optional `OPENAI_MODEL` (default `gpt-4o-mini`)
-
-- Use Ollama qwen2.5:1.5b:
-  - `MODEL_PROVIDER=ollama`
-  - run Ollama locally and pull model:
+Set your OpenAI API key and optionally configure the model:
 
 ```bash
-ollama pull qwen2.5:1.5b
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o-mini  # optional, defaults to gpt-4o-mini
 ```
-
-- optional `OLLAMA_BASE_URL` and `OLLAMA_MODEL`
-
-You can override provider/model per MCP tool call (`run_agent`).
 
 ## MCP Tools
 
-- `health`: returns server status and default model config
-- `run_agent`: runs the LangGraph workflow
+- `health`: returns server status and model config
+- `run_agent`: runs the agent workflow
   - input:
     - `prompt` (string, required)
-    - `provider` (`openai` or `ollama`, optional)
-    - `model` (string, optional)
 
 ## Example MCP Client Config (Claude Desktop style)
 
 ```json
 {
   "mcpServers": {
-    "nestjs-langgraph": {
+    "nestjs-openai-agents": {
       "command": "node",
       "args": ["/absolute/path/to/langraph-mcp/dist/main.js"],
       "env": {
-        "MODEL_PROVIDER": "ollama",
-        "OLLAMA_BASE_URL": "http://localhost:11434",
-        "OLLAMA_MODEL": "qwen2.5:1.5b"
+        "OPENAI_API_KEY": "sk-..."
       }
     }
   }
 }
 ```
 
-## LangGraph Demo Suite
+## OpenAI Agents SDK Demo Suite
 
-This repo includes agents and tools built using proper LangGraph.js patterns:
+This repo includes agents and tools built using OpenAI Agents SDK patterns:
 
-- **Tools**: Defined using `tool()` from `@langchain/core/tools` with Zod schemas
-- **Agents**: Built with `createReactAgent` or custom `StateGraph` with `MessagesAnnotation`
-- **Tool Execution**: Uses `ToolNode` and `toolsCondition` from `@langchain/langgraph/prebuilt`
-- **LLM Binding**: Tools bound to LLM via `.bindTools(tools)`
+- **Tools**: Defined using `tool()` from `@openai/agents` with Zod schemas
+- **Agents**: Built with `new Agent({ name, instructions, tools, handoffs })`
+- **Handoffs**: Multi-agent delegation via `handoff()` helper
+- **HITL**: Human-in-the-loop via `needsApproval` and `interruptions`
 
 ### Demo Capabilities
 
 | Demo          | Capability                              |
 | ------------- | --------------------------------------- |
-| 01-reasoning  | Basic StateGraph workflow               |
-| 02-parallel   | Parallel tool calls via ToolNode        |
-| 03-handoffs   | Agent-to-agent handoffs via coordinator |
+| 01-reasoning  | Basic agent invocation                  |
+| 02-parallel   | Parallel tool calls                     |
+| 03-handoffs   | Agent-to-agent handoffs                 |
 | 04-hitl       | Human-in-the-loop approval workflow     |
 | 05-structured | Structured output with Zod validation   |
-| 06-tracing    | Execution tracing through graph         |
+| 06-tracing    | Execution tracing                       |
 | 07-discovery  | Tool discovery and registry             |
-| 08-planning   | Multi-step planning loop                |
+| 08-planning   | Multi-step planning with tools          |
 | 09-failure    | Error handling and retry                |
-| 10-local      | Local Ollama model integration          |
+| 10-model      | Model configuration demo                |
 
 ### Project Layout
 
@@ -134,20 +120,17 @@ agents/
 ├── analytics.agent.ts
 ├── reporting.agent.ts
 ├── approval.agent.ts
+├── main.agent.ts
 └── model.config.ts
 ```
 
 ### Prerequisites
 
-Ensure Ollama is running with a **tool-capable** model:
+Set your OpenAI API key:
 
 ```bash
-# qwen2.5:1.5b supports tool calling (recommended)
-ollama pull qwen2.5:1.5b
-ollama serve
+export OPENAI_API_KEY=sk-...
 ```
-
-**Note:** Models like `qwen2.5:1.5b` do not support tool calling. Use `qwen2.5:1.5b`, `llama3.1`, `mistral`, or `qwen2.5` for full demo functionality.
 
 Run all demos:
 
@@ -158,11 +141,81 @@ npm run demo
 Run one demo:
 
 ```bash
-npm run demo:one -- 03
+npm run demo:one -- --demo=03
 ```
 
-Optional HITL switch for demo 04:
+### Key API Patterns
 
-```bash
-DEMO_REVIEW_DECISION=approved npm run demo:one -- 04
+**Tool Definition:**
+```typescript
+import { tool } from "@openai/agents";
+import { z } from "zod";
+
+const myTool = tool({
+  name: "my_tool",
+  description: "Does something useful",
+  parameters: z.object({
+    param: z.string().describe("A parameter"),
+  }),
+  execute: async ({ param }) => {
+    return `Result for ${param}`;
+  },
+});
 ```
+
+**Agent Creation:**
+```typescript
+import { Agent, run } from "@openai/agents";
+
+const agent = new Agent({
+  name: "My Agent",
+  model: "gpt-4o-mini",
+  instructions: "You are a helpful assistant.",
+  tools: [myTool],
+});
+
+const result = await run(agent, "User message");
+console.log(result.finalOutput);
+```
+
+**Handoffs:**
+```typescript
+import { Agent, handoff } from "@openai/agents";
+
+const specialist = new Agent({ name: "Specialist", ... });
+const mainAgent = Agent.create({
+  name: "Main",
+  handoffs: [handoff(specialist)],
+});
+```
+
+**Human-in-the-loop:**
+```typescript
+const sensitiveTool = tool({
+  name: "sensitive_action",
+  needsApproval: true,  // or async function
+  execute: async () => { ... },
+});
+
+const result = await run(agent, message);
+if (result.interruptions?.length > 0) {
+  // Handle approval
+  result.state.approve(result.interruptions[0]);
+  const resumed = await run(agent, result.state);
+}
+```
+
+## Migration from LangGraph
+
+This project was migrated from LangGraph/LangChain to OpenAI Agents SDK:
+
+| LangGraph Pattern | OpenAI Agents SDK |
+|-------------------|-------------------|
+| `StateGraph` + nodes | `Agent` with built-in loop |
+| `createAgent()` | `new Agent({ ... })` |
+| `tool()` from @langchain/core | `tool()` from @openai/agents |
+| `ToolNode` + routing | Automatic tool handling |
+| Manual HITL nodes | `needsApproval` + `interruptions` |
+| Custom routing | `handoff()` helper |
+
+> **Note**: OpenAI Agents SDK is optimized for OpenAI models. For local model support (Ollama), consider maintaining a separate LangChain setup or using OpenAI-compatible local servers.

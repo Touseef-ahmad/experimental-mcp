@@ -1,81 +1,67 @@
-import { END, START, Annotation, StateGraph } from "@langchain/langgraph";
+import { Agent, run, tool } from "@openai/agents";
+import { z } from "zod";
+import { getModelConfig } from "../agents/model.config.js";
 import { runDemo, step, node, edge, toolResult } from "./utils/demo-utils.js";
 
-const State = Annotation.Root({
-  attempts: Annotation<number>,
-  status: Annotation<"ok" | "failed">,
-  trace: Annotation<string[]>,
-});
-
-function flakyTool(attempt: number): string {
-  if (attempt < 2) {
-    throw new Error("transient tool failure");
-  }
-  return "tool success";
-}
+// Simulated flaky tool that fails first 2 attempts
+let attemptCount = 0;
 
 export async function runFailureHandlingDemo(): Promise<void> {
   await runDemo("09 failure handling", async () => {
-    const graph = new StateGraph(State)
-      .addNode("executeWithRetry", async (state) => {
-        try {
-          const output = flakyTool(state.attempts + 1);
-          return {
-            attempts: state.attempts + 1,
-            status: "ok",
-            trace: [...state.trace, output],
-          };
-        } catch (error) {
-          return {
-            attempts: state.attempts + 1,
-            status: "failed",
-            trace: [...state.trace, `error=${(error as Error).message}`],
-          };
-        }
-      })
-      .addEdge(START, "executeWithRetry")
-      .addConditionalEdges("executeWithRetry", (state) => {
-        if (state.status === "ok") {
-          return END;
-        }
-        return state.attempts >= 2 ? END : "executeWithRetry";
-      })
-      .compile();
+    const config = getModelConfig();
+    
+    // Reset attempt counter for each demo run
+    attemptCount = 0;
 
-    step("streaming execution with retry logic...");
-    edge("START", "executeWithRetry");
-
-    const stream = await graph.stream({
-      attempts: 0,
-      status: "failed",
-      trace: [],
+    // A flaky tool that fails initially but eventually succeeds
+    const flakyTool = tool({
+      name: "flaky_operation",
+      description: "A flaky operation that may fail. Keep retrying if it fails.",
+      parameters: z.object({
+        operation: z.string().describe("The operation to perform"),
+      }),
+      execute: async ({ operation }) => {
+        attemptCount++;
+        if (attemptCount < 3) {
+          throw new Error("transient tool failure");
+        }
+        return `Success on attempt ${attemptCount}: ${operation}`;
+      },
     });
 
-    for await (const event of stream) {
-      for (const [nodeName, output] of Object.entries(event)) {
-        const outputObj = output as {
-          attempts?: number;
-          status?: string;
-          trace?: string[];
-        };
-        const attempt = outputObj.attempts ?? 0;
-        const status = outputObj.status ?? "unknown";
-        const lastTrace = outputObj.trace?.[outputObj.trace.length - 1];
+    const agent = new Agent({
+      name: "Resilient Agent",
+      model: config.model,
+      instructions: `You handle operations that may fail. When using the flaky_operation tool:
+1. If it fails, try again (up to 3 times)
+2. Report the final result or failure
 
-        node(nodeName, `attempt ${attempt} → ${status}`);
+Always attempt the operation when asked.`,
+      tools: [flakyTool],
+    });
 
-        if (lastTrace?.startsWith("error=")) {
-          toolResult("flakyTool", `❌ ${lastTrace}`);
-          if (attempt < 2) {
-            edge(nodeName, "executeWithRetry (retry)");
-          }
-        } else if (lastTrace) {
-          toolResult("flakyTool", `✅ ${lastTrace}`);
-          edge(nodeName, "END");
+    step("running agent with retry logic...");
+    edge("START", "agent");
+
+    const result = await run(agent, "Execute the critical operation");
+
+    // Show the retry pattern
+    for (let i = 1; i <= attemptCount; i++) {
+      const status = i < 3 ? "failed" : "ok";
+      node("agent", `attempt ${i} → ${status}`);
+      
+      if (i < 3) {
+        toolResult("flaky_operation", `❌ error=transient tool failure`);
+        if (i < attemptCount) {
+          edge("agent", "agent (retry)");
         }
+      } else {
+        toolResult("flaky_operation", `✅ Success on attempt ${i}`);
+        edge("agent", "END");
       }
     }
 
     step("retry pattern: fail → fail → success (or max attempts)");
+    step(`final output: ${result.finalOutput}`);
   });
 }

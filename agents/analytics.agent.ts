@@ -1,35 +1,27 @@
-import { createAgent } from "langchain";
-import { BaseChatModel } from "@langchain/core/language_models/chat_models";
+import { Agent, run } from "@openai/agents";
 import { analyticsTools } from "./tools.js";
+import { getModelConfig } from "./model.config.js";
 
-export function createAnalyticsAgent(llm: BaseChatModel) {
-  const agent = createAgent({
-    model: llm,
+export function createAnalyticsAgent() {
+  const config = getModelConfig();
+
+  const agent = new Agent({
+    name: "Analytics Agent",
+    model: config.model,
+    instructions:
+      "You are an analytics specialist. Analyze engagement scores, trends, and project health metrics.",
     tools: analyticsTools,
   });
 
   return {
     name: "analytics-agent",
-    systemPrompt:
-      "You are an analytics specialist. Analyze engagement, trends, and project health.",
+    agent,
     tools: analyticsTools,
     async invoke(message: string) {
-      const result = await agent.invoke({
-        messages: [["user", message]],
-      });
-      const lastMessage = result.messages[result.messages.length - 1];
+      const result = await run(agent, message);
       return {
-        content:
-          typeof lastMessage.content === "string"
-            ? lastMessage.content
-            : JSON.stringify(lastMessage.content),
-        messages: result.messages,
+        content: String(result.finalOutput ?? ""),
       };
-    },
-    async stream(message: string) {
-      return agent.stream({
-        messages: [["user", message]],
-      });
     },
   };
 }

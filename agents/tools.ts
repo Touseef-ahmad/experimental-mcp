@@ -1,4 +1,4 @@
-import { tool } from "@langchain/core/tools";
+import { tool } from "@openai/agents";
 import { z } from "zod";
 
 // ============================================================
@@ -12,42 +12,43 @@ const EMPLOYEES = [
   { id: "e-103", name: "Liam", team: "Security", manager: "Tia" },
 ];
 
-export const listEmployees = tool(
-  async () => {
+export const listEmployees = tool({
+  name: "list_employees",
+  description:
+    "Lists all employees in the organization with their team and manager info.",
+  parameters: z.object({}),
+  execute: async () => {
     return JSON.stringify(EMPLOYEES);
   },
-  {
-    name: "list_employees",
-    description:
-      "Lists all employees in the organization with their team and manager info.",
-    schema: z.object({}),
-  },
-);
+});
 
-export const findEmployeeByName = tool(
-  async ({ name }) => {
+export const findEmployeeByName = tool({
+  name: "find_employee_by_name",
+  description: "Finds an employee by their exact name.",
+  parameters: z.object({
+    name: z.string().describe("The employee name to search for"),
+  }),
+  execute: async ({ name }) => {
     const employee = EMPLOYEES.find(
-      (e) => e.name.toLowerCase() === name.toLowerCase(),
+      (e) => e.name.toLowerCase() === name.toLowerCase()
     );
     return employee
       ? JSON.stringify(employee)
       : `No employee found with name: ${name}`;
   },
-  {
-    name: "find_employee_by_name",
-    description: "Finds an employee by their exact name.",
-    schema: z.object({
-      name: z.string().describe("The employee name to search for"),
-    }),
-  },
-);
+});
 
 // ============================================================
 // Analytics Tools
 // ============================================================
 
-export const getEngagementScore = tool(
-  async ({ teamOrEmployee }) => {
+export const getEngagementScore = tool({
+  name: "get_engagement_score",
+  description: "Calculates the engagement score for a team or employee.",
+  parameters: z.object({
+    teamOrEmployee: z.string().describe("Name of the team or employee"),
+  }),
+  execute: async ({ teamOrEmployee }) => {
     let score = 0;
     for (const char of teamOrEmployee) {
       score += char.charCodeAt(0);
@@ -55,62 +56,55 @@ export const getEngagementScore = tool(
     const finalScore = 40 + (score % 61);
     return `Engagement score for "${teamOrEmployee}": ${finalScore}/100`;
   },
-  {
-    name: "get_engagement_score",
-    description: "Calculates the engagement score for a team or employee.",
-    schema: z.object({
-      teamOrEmployee: z.string().describe("Name of the team or employee"),
-    }),
-  },
-);
+});
 
-export const getTrendSummary = tool(
-  async ({ topic }) => {
+export const getTrendSummary = tool({
+  name: "get_trend_summary",
+  description: "Gets the trend summary for a given topic or metric.",
+  parameters: z.object({
+    topic: z.string().describe("The topic or metric to analyze"),
+  }),
+  execute: async ({ topic }) => {
     const trends = ["upward", "stable", "slightly down"];
     const index = topic.length % trends.length;
     return `Trend for "${topic}": ${trends[index]} this week`;
   },
-  {
-    name: "get_trend_summary",
-    description: "Gets the trend summary for a given topic or metric.",
-    schema: z.object({
-      topic: z.string().describe("The topic or metric to analyze"),
-    }),
-  },
-);
+});
 
-export const getProjectHealth = tool(
-  async ({ projectName }) => {
+export const getProjectHealth = tool({
+  name: "get_project_health",
+  description: "Gets the health status of a project.",
+  parameters: z.object({
+    projectName: z.string().describe("Name of the project"),
+  }),
+  execute: async ({ projectName }) => {
     const statuses = ["green", "amber", "red"];
     const index = projectName.length % 3;
     return `Project "${projectName}" health status: ${statuses[index]}`;
   },
-  {
-    name: "get_project_health",
-    description: "Gets the health status of a project.",
-    schema: z.object({
-      projectName: z.string().describe("Name of the project"),
-    }),
-  },
-);
+});
 
-export const getCurrentTimestamp = tool(
-  async () => {
+export const getCurrentTimestamp = tool({
+  name: "get_current_timestamp",
+  description: "Gets the current UTC timestamp.",
+  parameters: z.object({}),
+  execute: async () => {
     return `Current timestamp: ${new Date().toISOString()}`;
   },
-  {
-    name: "get_current_timestamp",
-    description: "Gets the current UTC timestamp.",
-    schema: z.object({}),
-  },
-);
+});
 
 // ============================================================
 // Reporting Tools
 // ============================================================
 
-export const buildReport = tool(
-  async ({ title, keyPoints }) => {
+export const buildReport = tool({
+  name: "build_report",
+  description: "Builds a structured report with title and key points.",
+  parameters: z.object({
+    title: z.string().describe("The report title"),
+    keyPoints: z.array(z.string()).describe("Array of key points to include"),
+  }),
+  execute: async ({ title, keyPoints }) => {
     const report = {
       title,
       summary: `Report generated from ${keyPoints.length} key point(s).`,
@@ -120,22 +114,23 @@ export const buildReport = tool(
     };
     return JSON.stringify(report);
   },
-  {
-    name: "build_report",
-    description: "Builds a structured report with title and key points.",
-    schema: z.object({
-      title: z.string().describe("The report title"),
-      keyPoints: z.array(z.string()).describe("Array of key points to include"),
-    }),
-  },
-);
+});
 
 // ============================================================
 // Approval Tools
 // ============================================================
 
-export const requestApproval = tool(
-  async ({ context, riskLevel }) => {
+export const requestApproval = tool({
+  name: "request_approval",
+  description:
+    "Requests approval for an action based on context and risk level.",
+  parameters: z.object({
+    context: z.string().describe("Description of what needs approval"),
+    riskLevel: z
+      .enum(["low", "medium", "high"])
+      .describe("Risk level of the action"),
+  }),
+  execute: async ({ context, riskLevel }) => {
     const autoApprove = riskLevel === "low";
     const decision = {
       status: autoApprove ? "approved" : "pending_review",
@@ -148,18 +143,7 @@ export const requestApproval = tool(
     };
     return JSON.stringify(decision);
   },
-  {
-    name: "request_approval",
-    description:
-      "Requests approval for an action based on context and risk level.",
-    schema: z.object({
-      context: z.string().describe("Description of what needs approval"),
-      riskLevel: z
-        .enum(["low", "medium", "high"])
-        .describe("Risk level of the action"),
-    }),
-  },
-);
+});
 
 // ============================================================
 // Tool Collections

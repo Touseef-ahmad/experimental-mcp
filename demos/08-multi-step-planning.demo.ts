@@ -1,4 +1,6 @@
-import { END, START, Annotation, StateGraph } from "@langchain/langgraph";
+import { Agent, run, tool } from "@openai/agents";
+import { z } from "zod";
+import { getModelConfig } from "../agents/model.config.js";
 import {
   runDemo,
   step,
@@ -8,85 +10,65 @@ import {
   printJson,
 } from "./utils/demo-utils.js";
 
-const State = Annotation.Root({
-  goal: Annotation<string>,
-  plan: Annotation<string[]>,
-  executed: Annotation<string[]>,
-  done: Annotation<boolean>,
-});
-
 export async function runMultiStepPlanningDemo(): Promise<void> {
   await runDemo("08 multi-step planning", async () => {
-    const graph = new StateGraph(State)
-      .addNode("planner", async (state) => ({
-        plan: [
-          `analyze goal: ${state.goal}`,
-          "collect employee signals",
-          "calculate engagement trend",
-          "generate report",
-        ],
-      }))
-      .addNode("execute", async (state) => {
-        if (state.plan.length === 0) {
-          return { done: true };
-        }
+    const config = getModelConfig();
 
-        const [next, ...remaining] = state.plan;
-        return {
-          plan: remaining,
-          executed: [...state.executed, next],
-          done: remaining.length === 0,
-        };
-      })
-      .addEdge(START, "planner")
-      .addEdge("planner", "execute")
-      .addConditionalEdges("execute", (state) => (state.done ? END : "execute"))
-      .compile();
+    // Track execution for demonstration
+    const executed: string[] = [];
 
-    step("streaming planning execution...");
-    edge("START", "planner");
-
-    const stream = await graph.stream({
-      goal: "prepare engagement report",
-      plan: [],
-      executed: [],
-      done: false,
+    // Tool to execute a plan step
+    const executePlanStep = tool({
+      name: "execute_plan_step",
+      description: "Executes a single step in the plan",
+      parameters: z.object({
+        stepDescription: z.string().describe("Description of the step to execute"),
+      }),
+      execute: async ({ stepDescription }) => {
+        executed.push(stepDescription);
+        return `Completed: ${stepDescription}`;
+      },
     });
 
-    let executionCount = 0;
-    for await (const event of stream) {
-      for (const [nodeName, output] of Object.entries(event)) {
-        const outputObj = output as {
-          plan?: string[];
-          executed?: string[];
-          done?: boolean;
-        };
+    const agent = new Agent({
+      name: "Planning Agent",
+      model: config.model,
+      instructions: `You are a planning agent. When given a goal:
+1. Create a plan with 3-4 specific steps
+2. Execute each step using the execute_plan_step tool
+3. Summarize what was accomplished
 
-        if (nodeName === "planner") {
-          node(nodeName, `created ${outputObj.plan?.length ?? 0} steps`);
-          if (outputObj.plan) {
-            for (const planStep of outputObj.plan) {
-              thinking(`planned: ${planStep}`);
-            }
-          }
-          edge("planner", "execute");
-        }
+For "prepare engagement report", create steps like:
+- Analyze goal requirements
+- Collect employee engagement signals
+- Calculate engagement trends
+- Generate final report`,
+      tools: [executePlanStep],
+    });
 
-        if (nodeName === "execute") {
-          executionCount++;
-          const lastExecuted =
-            outputObj.executed?.[outputObj.executed.length - 1];
-          node(nodeName, `step ${executionCount}: ${lastExecuted ?? "none"}`);
+    step("running planning agent...");
+    edge("START", "planner");
 
-          if (outputObj.done) {
-            edge("execute", "END");
-          } else {
-            edge("execute", "execute (loop)");
-          }
-        }
+    const result = await run(agent, "prepare engagement report");
+
+    // Show execution trace
+    node("planner", `created ${executed.length} steps`);
+    
+    for (let i = 0; i < executed.length; i++) {
+      thinking(`planned: ${executed[i]}`);
+      if (i === 0) {
+        edge("planner", "execute");
+      }
+      node("execute", `step ${i + 1}: ${executed[i]}`);
+      if (i < executed.length - 1) {
+        edge("execute", "execute (loop)");
       }
     }
 
-    step(`total execution loops: ${executionCount}`);
+    edge("execute", "END");
+
+    printJson("executed steps", executed);
+    step(`total execution steps: ${executed.length}`);
+    step(`final output: ${result.finalOutput}`);
   });
 }

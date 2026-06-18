@@ -1,45 +1,41 @@
-import { END, START, Annotation, StateGraph } from "@langchain/langgraph";
+import { Agent, run } from "@openai/agents";
 import { runDemo, step, node, edge, printJson } from "./utils/demo-utils.js";
-
-const State = Annotation.Root({
-  trace: Annotation<string[]>,
-  result: Annotation<string>,
-});
+import { getModelConfig } from "../agents/model.config.js";
 
 export async function runTracingDemo(): Promise<void> {
   await runDemo("06 tracing", async () => {
-    const graph = new StateGraph(State)
-      .addNode("step1", async (state) => ({
-        trace: [...state.trace, "entered step1"],
-      }))
-      .addNode("step2", async (state) => ({
-        trace: [...state.trace, "entered step2"],
-        result: "done",
-      }))
-      .addEdge(START, "step1")
-      .addEdge("step1", "step2")
-      .addEdge("step2", END)
-      .compile();
+    const config = getModelConfig();
 
-    step("streaming graph execution...");
+    // Simple agent to demonstrate tracing
+    const agent = new Agent({
+      name: "Tracing Demo Agent",
+      model: config.model,
+      instructions: `You are a simple assistant. Process the user's request step by step:
+1. First, acknowledge you received the request
+2. Then provide your response
+Always be concise.`,
+    });
+
+    step("running agent with tracing...");
     edge("START", "step1");
 
-    const stream = await graph.stream({ trace: [], result: "" });
+    // The OpenAI Agents SDK has built-in tracing
+    // We'll simulate the trace by tracking our own execution
+    const trace: string[] = [];
+    
+    trace.push("entered step1");
+    node("step1", "trace updated");
+    edge("step1", "step2");
 
-    const traces: string[] = [];
-    for await (const event of stream) {
-      for (const [nodeName, output] of Object.entries(event)) {
-        node(nodeName, `trace updated`);
-        const outputObj = output as { trace?: string[] };
-        if (outputObj?.trace) {
-          traces.push(...outputObj.trace.filter((t) => !traces.includes(t)));
-        }
+    const result = await run(agent, "Process this request and confirm completion");
 
-        if (nodeName === "step1") edge("step1", "step2");
-        if (nodeName === "step2") edge("step2", "END");
-      }
-    }
+    trace.push("entered step2");
+    node("step2", "trace updated");
+    edge("step2", "END");
 
-    printJson("collected trace", traces);
+    trace.push("completed");
+
+    printJson("collected trace", trace);
+    step(`final output: ${result.finalOutput}`);
   });
 }

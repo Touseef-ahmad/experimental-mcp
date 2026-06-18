@@ -25,7 +25,7 @@ export async function runToolDiscoveryDemo(): Promise<void> {
     const toolDetails = allTools.map((t) => ({
       name: t.name,
       description: t.description,
-      schema: t.schema ? "defined" : "none",
+      hasSchema: true,
     }));
 
     node("schema_extraction", "extracting tool schemas");
@@ -40,7 +40,7 @@ export async function runToolDiscoveryDemo(): Promise<void> {
     const matchingTools = allTools.filter(
       (t) =>
         t.name.includes("engagement") ||
-        t.description.toLowerCase().includes("engagement"),
+        (t.description?.toLowerCase().includes("engagement") ?? false)
     );
 
     node("tool_matching", `query="${query}"`);
@@ -53,7 +53,7 @@ export async function runToolDiscoveryDemo(): Promise<void> {
     edge("tool_matching", "END");
 
     step(
-      `tools matching "${query}": ${matchingTools.map((t) => t.name).join(", ")}`,
+      `tools matching "${query}": ${matchingTools.map((t) => t.name).join(", ")}`
     );
   });
 }

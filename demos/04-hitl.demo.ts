@@ -1,15 +1,8 @@
 /// <reference types="node" />
 import * as readline from "readline";
-import {
-  StateGraph,
-  START,
-  END,
-  Annotation,
-  MessagesAnnotation,
-} from "@langchain/langgraph";
-import { ToolNode } from "@langchain/langgraph/prebuilt";
-import { createAgents } from "../agents/agent.factory.js";
-import { approvalTools } from "../agents/tools.js";
+import { Agent, run, tool } from "@openai/agents";
+import { z } from "zod";
+import { getModelConfig } from "../agents/model.config.js";
 import {
   runDemo,
   step,
@@ -34,148 +27,83 @@ async function promptUser(question: string): Promise<string> {
   });
 }
 
-// HITL state with interrupt capability
-const HITLState = Annotation.Root({
-  ...MessagesAnnotation.spec,
-  pendingApproval: Annotation<boolean>,
-  humanDecision: Annotation<string | undefined>,
-});
-
 export async function runHitlDemo(): Promise<void> {
   await runDemo("04 human-in-the-loop", async () => {
-    const { llm } = createAgents();
+    const config = getModelConfig();
 
-    const llmWithTools = llm.bindTools!(approvalTools);
-    const toolNode = new ToolNode(approvalTools);
+    // Approval tool that requires human review for high risk
+    const requestApprovalTool = tool({
+      name: "request_approval",
+      description:
+        "Requests approval for an action. High risk requires human review.",
+      parameters: z.object({
+        context: z.string().describe("Description of what needs approval"),
+        riskLevel: z.enum(["low", "medium", "high"]).describe("Risk level"),
+      }),
+      needsApproval: async (_context, { riskLevel }) => {
+        return riskLevel === "high";
+      },
+      execute: async ({ context, riskLevel }) => {
+        return JSON.stringify({
+          status: "approved",
+          context,
+          riskLevel,
+          reviewer: riskLevel === "high" ? "human" : "auto",
+        });
+      },
+    });
 
-    const agentNode = async (state: typeof HITLState.State) => {
-      const response = await llmWithTools.invoke(state.messages);
-      return { messages: [response] };
-    };
+    const agent = new Agent({
+      name: "Approval Agent",
+      model: config.model,
+      instructions:
+        "You handle approval requests. Use the request_approval tool.",
+      tools: [requestApprovalTool],
+    });
 
-    // Node that checks if human review is needed
-    const checkApprovalNode = async (state: typeof HITLState.State) => {
-      // Check tool results for pending_review status
-      for (const msg of state.messages) {
-        if (msg && typeof msg === "object" && "content" in msg) {
-          const content = typeof msg.content === "string" ? msg.content : "";
-          if (content.includes("pending_review") || content.includes("high")) {
-            return { pendingApproval: true };
-          }
-        }
-      }
-      return { pendingApproval: false };
-    };
+    step("running agent with HITL...");
+    edge("START", "agent");
 
-    // Human review node - prompts user for approval
-    const humanReviewNode = async (state: typeof HITLState.State) => {
+    let result = await run(
+      agent,
+      "Request approval for deploying to production with high risk level",
+    );
+
+    node("agent", "requested approval");
+    toolCall("request_approval", { riskLevel: "high" });
+
+    // Check if we have interruptions (human review needed)
+    if (result.interruptions && result.interruptions.length > 0) {
+      edge("agent", "human_review");
+      node("human_review", "awaiting decision");
+
       console.log("\n  ⚠️  HUMAN REVIEW REQUIRED");
       console.log("  Request: Deploy to production with HIGH risk level");
+
       const decision = await promptUser(
         "  Enter decision (approved/rejected): ",
       );
       step(`human reviewer decision: ${decision}`);
-      return {
-        messages: [
-          {
-            role: "assistant",
-            content: `Human review complete. Decision: ${decision}`,
-          },
-        ],
-        pendingApproval: false,
-        humanDecision: decision,
-      };
-    };
 
-    const workflow = new StateGraph(HITLState)
-      .addNode("agent", agentNode)
-      .addNode("tools", toolNode)
-      .addNode("check_approval", checkApprovalNode)
-      .addNode("human_review", humanReviewNode)
-      .addEdge(START, "agent")
-      .addConditionalEdges("agent", (state) => {
-        const lastMessage = state.messages[state.messages.length - 1];
-        if (
-          lastMessage &&
-          "tool_calls" in lastMessage &&
-          Array.isArray(lastMessage.tool_calls) &&
-          lastMessage.tool_calls.length > 0
-        ) {
-          return "tools";
+      // Approve or reject the interruption
+      const state = result.state;
+      for (const interruption of result.interruptions) {
+        if (decision === "approved" || decision === "y" || decision === "yes") {
+          state.approve(interruption);
+        } else {
+          state.reject(interruption, { message: "Rejected by human reviewer" });
         }
-        return "check_approval";
-      })
-      .addEdge("tools", "check_approval")
-      .addConditionalEdges("check_approval", (state) => {
-        return state.pendingApproval ? "human_review" : END;
-      })
-      .addEdge("human_review", END);
-
-    const graph = workflow.compile();
-
-    // Test with high risk request that requires human review
-    step("streaming graph execution with HITL...");
-    edge("START", "agent");
-
-    const stream = await graph.stream({
-      messages: [
-        [
-          "user",
-          "Request approval for deploying to production with high risk level",
-        ],
-      ],
-      pendingApproval: false,
-      humanDecision: undefined,
-    });
-
-    let finalState: typeof HITLState.State | null = null;
-
-    for await (const event of stream) {
-      for (const [nodeName, output] of Object.entries(event)) {
-        node(nodeName);
-
-        const outputObj = output as {
-          messages?: Array<{
-            tool_calls?: Array<{ name: string; args: unknown }>;
-            content?: string;
-            role?: string;
-          }>;
-          pendingApproval?: boolean;
-        };
-
-        // Show tool calls
-        if (outputObj?.messages) {
-          for (const msg of outputObj.messages) {
-            if (msg.tool_calls && Array.isArray(msg.tool_calls)) {
-              for (const tc of msg.tool_calls) {
-                toolCall(tc.name, tc.args);
-              }
-              edge(nodeName, "tools");
-            }
-            if (msg.role === "tool" && typeof msg.content === "string") {
-              toolResult("tool", msg.content);
-            }
-          }
-        }
-
-        // Show human review trigger
-        if (outputObj?.pendingApproval !== undefined) {
-          step(`pending approval: ${outputObj.pendingApproval}`);
-          if (outputObj.pendingApproval) {
-            edge(nodeName, "human_review");
-          }
-        }
-
-        finalState = {
-          ...finalState,
-          ...(output as typeof HITLState.State),
-        } as typeof HITLState.State;
       }
+
+      // Resume execution
+      result = await run(agent, state);
+      edge("human_review", "agent");
     }
 
-    edge("human_review", "END");
-    step(
-      `final status: pendingApproval=${finalState?.pendingApproval ?? "unknown"}`,
-    );
+    node("agent", "completed");
+    edge("agent", "END");
+
+    toolResult("request_approval", String(result.finalOutput ?? ""));
+    step("HITL workflow complete");
   });
 }

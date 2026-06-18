@@ -1,7 +1,7 @@
 {
-  "name": "langraph-mcp",
-  "version": "1.0.0",
-  "description": "NestJS + LangGraph MCP proof-of-concept server",
+  "name": "openai-agents-mcp",
+  "version": "2.0.0",
+  "description": "NestJS + OpenAI Agents SDK MCP proof-of-concept server",
   "type": "module",
   "main": "dist/main.js",
   "scripts": {
@@ -19,18 +19,14 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
-    "@langchain/core": "^1.1.49",
-    "@langchain/langgraph": "^1.4.2",
-    "@langchain/ollama": "^1.2.7",
-    "@langchain/openai": "^1.4.7",
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@nestjs/common": "^11.1.27",
     "@nestjs/core": "^11.1.27",
+    "@openai/agents": "^0.11.7",
     "dotenv": "^17.4.2",
-    "langchain": "^1.4.5",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2",
-    "zod": "^4.4.3"
+    "zod": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^25.9.3",

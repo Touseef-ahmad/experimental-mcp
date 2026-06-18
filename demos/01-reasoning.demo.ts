@@ -1,52 +1,27 @@
-import { END, START, Annotation, StateGraph } from "@langchain/langgraph";
+import { Agent, run } from "@openai/agents";
 import { runDemo, step, node, edge } from "./utils/demo-utils.js";
-
-const State = Annotation.Root({
-  question: Annotation<string>,
-  answer: Annotation<string>,
-  trace: Annotation<string[]>,
-});
+import { getModelConfig } from "../agents/model.config.js";
 
 export async function runReasoningDemo(): Promise<void> {
   await runDemo("01 reasoning", async () => {
-    const graph = new StateGraph(State)
-      .addNode("reason", async (state) => {
-        const answer = state.question.toLowerCase().includes("time")
-          ? `The current UTC time is ${new Date().toISOString()}`
-          : "I reasoned over the question and found a simple answer.";
+    const config = getModelConfig();
 
-        return {
-          answer,
-          trace: [...state.trace, "reason node evaluated question"],
-        };
-      })
-      .addEdge(START, "reason")
-      .addEdge("reason", END)
-      .compile();
-
-    step("streaming graph execution...");
-    edge("START", "reason");
-
-    const stream = await graph.stream({
-      question: "Can you tell me the time?",
-      answer: "",
-      trace: [],
+    // Simple reasoning agent that answers questions
+    const agent = new Agent({
+      name: "Reasoning Agent",
+      model: config.model,
+      instructions: `You are a reasoning agent. When asked about the time, provide the current UTC timestamp. 
+For other questions, reason through them step by step and provide a clear answer.`,
     });
 
-    let result: typeof State.State | null = null;
-    for await (const event of stream) {
-      result = event as typeof State.State;
-      for (const [nodeName, output] of Object.entries(event)) {
-        node(nodeName, `produced answer`);
-      }
-    }
+    step("running agent...");
+    edge("START", "agent");
 
-    edge("reason", "END");
+    const result = await run(agent, "Can you tell me the time?");
 
-    if (result) {
-      step(
-        `answer: ${(result as { reason?: { answer?: string } }).reason?.answer ?? "N/A"}`,
-      );
-    }
+    node("agent", "processed question");
+    edge("agent", "END");
+
+    step(`answer: ${result.finalOutput}`);
   });
 }
